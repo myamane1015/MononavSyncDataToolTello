@@ -22,9 +22,6 @@ import PIL
 import cv2 as cv2
 import numpy as np
 import tellopy
-from cflib.crazyflie import Crazyflie, HighLevelCommander
-from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
-from numpy import ndarray, dtype
 from scipy.spatial.transform import Rotation as Rotation
 from scipy.spatial import distance
 import os
@@ -34,13 +31,9 @@ import copy
 import yaml, json
 from PIL import Image
 import PIL
-import pyrealsense2 as rs
+#import pyrealsense2 as rs
 import av
 import pykinect_azure as pykinect
-
-# For Craziflie logging
-from cflib.crazyflie.log import LogConfig
-from cflib.crazyflie.syncLogger import SyncLogger
 
 # For bufferless video capture
 import queue, threading
@@ -197,7 +190,7 @@ class AzureVideoCapture:
 
     def __init__(self):
         # Initialize the library, if the library is not found, add the library path as argument
-        pykinect.initialize_libraries()
+        pykinect.initialize_libraries("Azure Kinect SDK v1.4.2/sdk/windows-desktop/amd64/release/bin/k4a.dll")
         # Modify camera configuration
         device_config = pykinect.default_configuration
         device_config.color_resolution = pykinect.K4A_COLOR_RESOLUTION_1080P
@@ -228,47 +221,6 @@ Output Matrix Format:
 """
 
 
-def get_crazyflie_pose(scf: SyncCrazyflie, logstate: LogConfig) -> np.ndarray:
-    """
-    Get the global Crazyflie (camera) pose from the logger, convert to the Open3D frame
-
-    Crazyflie frame: (X, Y, Z) is FRONT LEFT UP (FLU).
-    Open3D frame: (X, Y, Z) is RIGHT DOWN FRONT (RDF)
-
-    Output Matrix Format: Top left is a 3x3 rotation matrix, the first 3 elements of the rightmost column
-    are the X, Y, and Z coordinates of the drone in an RDF convention, and the bottom row exists to make it square.
-
-    Returns: 4x4 Crazyflie pose array
-
-    Args:
-        scf: SecureCrazyflie object
-        logstate: Crazyflie Log state
-
-    """
-    with SyncLogger(scf, logstate) as logger:
-        for log_entry in logger:
-            data = log_entry[1]
-            _x = data['stateEstimate.x']
-            _y = data['stateEstimate.y']
-            _z = data['stateEstimate.z']
-            _roll = data['stateEstimate.roll']
-            _pitch = data['stateEstimate.pitch']
-            _yaw = data['stateEstimate.yaw']
-            # Convert position from CF to TSDF frame
-            xyz = np.array([-_y, -_z, _x])  # Convert to TSDF frame
-            # Convert rotation from CF to TSDF frame
-            r = Rotation.from_euler('xyz', [_roll, -_pitch, _yaw], degrees=True)
-            R = r.as_matrix()
-            M_change = np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]])
-            R = M_change @ R @ M_change.T
-
-            # Create a homogeneous matrix
-            Hmtrx = np.hstack((R, xyz.reshape(3, 1)))
-            # return camera position
-            pose = np.vstack((Hmtrx, np.array([0, 0, 0, 1])))
-            return pose
-
-
 def get_rootdir() -> Path:
     """
     Convenience function to get the root directory of the program
@@ -279,54 +231,3 @@ def get_rootdir() -> Path:
     # File parent is utils
     # utils parent is main Mononav dir
     return Path(__file__).parent.parent
-
-
-def reset_estimator(scf: SyncCrazyflie):
-    """
-    Upon Crazyflie startup, these helper functions ensure the EKF is properly initialized before takeoff.
-    Taken from several Crazyflie examples, e.g.,
-    https://github.com/bitcraze/crazyflie-lib-python/blob/master/examples/autonomy/autonomous_sequence_high_level.py. \n
-    #  Copyright (C) 2018 Bitcraze AB
-
-    Args:
-        scf: SyncCrazyflie object
-    """
-    scf.param.set_value('kalman.resetEstimation', '1')
-    time.sleep(0.1)
-    scf.param.set_value('kalman.resetEstimation', '0')
-
-    print('Waiting for estimator to find position...')
-
-    log_config = LogConfig(name='Kalman Variance', period_in_ms=500)
-    log_config.add_variable('kalman.varPX', 'float')
-    log_config.add_variable('kalman.varPY', 'float')
-    log_config.add_variable('kalman.varPZ', 'float')
-
-    var_y_history = [1000] * 10
-    var_x_history = [1000] * 10
-    var_z_history = [1000] * 10
-
-    threshold = 0.001
-
-    with SyncLogger(scf, log_config) as logger:
-        for log_entry in logger:
-            data = log_entry[1]
-
-            var_x_history.append(data['kalman.varPX'])
-            var_x_history.pop(0)
-            var_y_history.append(data['kalman.varPY'])
-            var_y_history.pop(0)
-            var_z_history.append(data['kalman.varPZ'])
-            var_z_history.pop(0)
-
-            min_x = min(var_x_history)
-            max_x = max(var_x_history)
-            min_y = min(var_y_history)
-            max_y = max(var_y_history)
-            min_z = min(var_z_history)
-            max_z = max(var_z_history)
-
-            if (max_x - min_x) < threshold and (
-                    max_y - min_y) < threshold and (
-                    max_z - min_z) < threshold:
-                break
