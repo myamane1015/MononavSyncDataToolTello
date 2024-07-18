@@ -58,7 +58,7 @@ camera_num = 1
 
 # Make directories for data
 save_dir = 'data/synced-trial-' + time.strftime("%Y-%m-%d-%H-%M-%S")
-os.mkdir(save_dir) if not os.path.exists(save_dir) else None
+os.makedirs(save_dir) if not os.path.exists(save_dir) else None
 
 # subdirectories for GT readings and CF images
 crazyflie_img_dir = os.path.join(save_dir, "crazyflie-rgb-images")
